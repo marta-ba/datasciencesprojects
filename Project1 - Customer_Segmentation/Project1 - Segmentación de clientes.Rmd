@@ -1,0 +1,1406 @@
+---
+title: "Análisis de Personalidad"
+author: "Marta Blanco Arévalo"
+date: "2023-02-11"
+output: html_document
+---
+
+
+
+```{r}
+#Cargo las librerias
+suppressWarnings(suppressPackageStartupMessages((library(arrow))))
+```
+
+
+```{r}
+suppressWarnings(suppressPackageStartupMessages((library(skimr))))
+```
+
+
+```{r}
+suppressWarnings(suppressPackageStartupMessages(library(tidyverse)))
+suppressWarnings(suppressPackageStartupMessages(library(formattable)))
+suppressWarnings(suppressPackageStartupMessages(library(gridExtra)))
+suppressWarnings(suppressPackageStartupMessages(library(corrplot)))
+suppressWarnings(suppressPackageStartupMessages(library(lattice)))
+suppressWarnings(suppressPackageStartupMessages(library(solitude)))
+suppressWarnings(suppressPackageStartupMessages(library(dplyr)))
+suppressWarnings(suppressPackageStartupMessages(library(data.table)))
+suppressWarnings(suppressPackageStartupMessages(library(UBL)))
+suppressWarnings(suppressPackageStartupMessages(library(sampling)))
+```
+
+```{r Ejercicio 4.1: PREPROCESADO - Análisis descriptivo de las variables}
+# Análisis descriptivo:
+
+Análisis_Personalidad = read_parquet("marketing_campaing.parquet")
+
+# Hipotesis inciales
+
+## Las claves principales del problema son:
+
+#1) Hay que ver la dependencia que tiene la modificación de un producto para llegar a un cliente objetivo 
+#2) De cara a la búsqueda de un mayor beneficio, sería interesante segmentar los clientes para luego comercializar el producto.
+
+# Estudios de las variables
+
+#- Variables susceptibles de ser segmentadas: Year_Birth, Income, Dt_Customer, Recency, MntWines, MntFruits, MntMeatProducts, MntFishProducts, MntSweetProducts, MntGoldProds, NumDealsPurchases, NumWebPurchases, NumCatalogPurchases, NumStorePurchases y NumWebVisitsMonth
+
+#- Variables que se van a convertir a factor: Education, Marital_Status, Kidhome, Teenhome, Complain y Response
+
+#En primer lugar, paso todas las variables indicadas arriba a factor y las meto en el dataset:
+
+
+Análisis_Personalidad$Education = as.factor(Análisis_Personalidad$Education)
+Análisis_Personalidad$Marital_Status = as.factor(Análisis_Personalidad$Marital_Status)
+Análisis_Personalidad$Kidhome = as.factor(Análisis_Personalidad$Kidhome)
+Análisis_Personalidad$Teenhome = as.factor(Análisis_Personalidad$Teenhome)
+Análisis_Personalidad$Complain = as.factor(Análisis_Personalidad$Complain)
+
+# El target es la variable "Response":
+
+Análisis_Personalidad$Response = as.factor(Análisis_Personalidad$Response)
+
+#Estudio los niveles de cada variable factor:
+
+levels(Análisis_Personalidad$Education)
+levels(Análisis_Personalidad$Marital_Status)
+# Me resultan curiosos dos niveles: 1) Absurd (no ve lógica la cuestión) and 2) YOLO (You Only Live Once)
+# A la vista de todas las variables, quizás tenga sentido agrupar los niveles de este factor en 3: VIVE EN PAREJA, VIVE SOLO, NS/NC/OTHERS:
+
+# Pareja: MARRIED + TOGETHER
+# Solos: ALONE + DIVORCED + WIDOW + SINGLE
+# NS/NC/OTHERS: ABSURD + YOLO
+
+levels(Análisis_Personalidad$Kidhome)
+levels(Análisis_Personalidad$Teenhome)
+levels(Análisis_Personalidad$Complain)
+levels(Análisis_Personalidad$Response)
+
+# Procedo a observar los valores nulos que pueda haber en el data set:
+
+sum(is.na(Análisis_Personalidad)) #Hay 1436 valores nulos.
+summary (Análisis_Personalidad)
+str(Análisis_Personalidad)
+
+#Destaco lo siguiente en función de los valores nulos: 
+
+#--> Con 180 NAs: Income
+#--> Con 157 NAs: Education (F), Maritial_Status (F), MntWines, MntFruits, MntFishProducts, MntSweetProducts, NumWebPurchases, NumWebVisitsMonth
+
+#Como Maritial_Status tiene NAs (157), tendré otro grupo, antes de imputación (NAs): 
+
+Porcentaje_NAs_MS = 100*(sum(is.na(Análisis_Personalidad$Marital_Status))/nrow(Análisis_Personalidad)) # 7% de NAs en la variable Maritial_Status. Me resulta significativo como para imputarlos todos a la variable moda. Por tanto tendré los siguientes grupos en Maritial_Status:
+
+# Pareja: MARRIED + TOGETHER
+# Solos: ALONE + DIVORCED + WIDOW + SINGLE
+# NS/NC/OTHERS: ABSURD + YOLO
+# NAs: NA
+
+#Se hace un annálisis más en detalle de las variables por medio de la función skim: 
+
+desc_AP <- skim(Análisis_Personalidad)
+desc_AP #Información interesante: Variable Maritial_Status - Top counts: Mar: 806, Tog: 542, Sin: 443, Div: 214
+
+# A ejecutar la función skim, también observo las posibles distribuciones que puede tener cada variable. De modo que, a priori, se puede saber que las variables numéricas que seguirian una distribución normal serían: "Income", "NumStorePurchases" y "NumWebVisitsMonth". No obstante, como ya se ha podido observar, la primera variable y la tercera presentan datos ausentes
+
+#Se obtienen los % de los datos ausentes de cada variable
+var_type_missing_AP <- desc_AP %>% 
+  mutate(n_missing_perc = 100 * round(1-complete_rate,5)) %>%
+  select(skim_type, skim_variable, n_missing, n_missing_perc) %>% 
+  arrange(skim_type, n_missing)
+
+formattable(var_type_missing_AP)
+
+#--> Con 8.04% NAs: Income
+#--> Con 7.01% NAs: Education (F), Maritial_Status (F), MntWines, MntFruits, MntFishProducts, MntSweetProducts, NumWebPurchases, NumWebVisitsMonth
+
+#¿Que ocurriría si eliminamos las observaciones que posean, al menos 1 NA entre sus variables? Veámoslo:
+
+AP_wonulls <- Análisis_Personalidad %>% drop_na()
+
+#Se comprueba que no hay NA:
+summary(AP_wonulls)
+str(AP_wonulls)
+sum(is.na(AP_wonulls))
+
+# % de observaciones eliminadas:
+
+Porcentaje_Obs_deleted=round(1 - nrow(AP_wonulls) / nrow(Análisis_Personalidad), 3)*100 #47.5% de las observaciones serían eliminadas si optamos por quitar. Consideramos que es un % muy significativo por lo que optamos por la imputación de los datos ausentes.
+
+# Como se ha comentado anteriormente, las variables numéricas "Income", "NumStorePurchases" y "NumWebVisitsMonth", aparentemente siguen una distrbución normal.
+
+# Confirmemos a través de histogramas y diagramas de cajas si: 1) efectivamente siguen una distribución normal y 2) hay presencia de outliers en las variables numéricas
+```
+
+
+```{r Ejercicio 4.2: PREPROCESADO - Análisis gráfico de las variables}
+#Se crea una función que elabore un histograma, tomando un data set y una de las variables. Omite los datos ausentes de la variable en cuestión:
+
+histogram_plot <- function(data, var, bins=50){
+  
+  var <- as.symbol(var)
+  data_na_omit <- data %>% select(!!var) %>% filter(!is.na(!!var))
+  Diff = max(data_na_omit[[var]]) - min (data_na_omit[[var]])
+  media = mean (data_na_omit[[var]])
+  mediana = median (data_na_omit[[var]])
+  
+  g <- ggplot(data_na_omit, aes(x = !!var)) +
+    geom_histogram(bins = bins, fill = "lightblue") +
+    geom_vline(xintercept = media, linetype = "dashed", color = "red", size = 1) +
+    geom_vline(xintercept = mediana, linetype = "dashed", color = "purple", size = 1) +
+    theme(legend.position = "topright") +
+    annotate("text", x = media + Diff/5, y = 30, label = paste("Media =", round(media, 1)), color = "red") +
+    annotate("text", x = media + Diff/5, y = 10, label = paste("Mediana =", round(mediana, 1)), color = "purple")
+}
+
+
+#Por otro lado, se crea otra función que elabore un histograma, tomando un data set, una de las variables y la variable objetivo, que vamos a suponer que es la variable Response, que nos indica si un cliente aceptó la oferta de la última campaña o no. Omite también los datos ausentes de la variable en cuestión:
+
+#Una cosa importante con la variable response es que carece de datos ausentes.
+
+histogram_var_target_plot <- function(data, var, target_var = "Response", bins=50){
+  var <- as.symbol(var)
+  target_var <- as.symbol(target_var)
+  data_na_omit <- data %>% select(!!var, !!target_var) %>% filter(!is.na(!!var))
+  
+  g <- ggplot(data_na_omit,
+              aes(x=!!var, fill=!!target_var), col=!!target_var
+              ) + geom_histogram(bins=50)
+}
+
+#Además de los histogramas de arriba, se crean funciones para elaborar diagramas de cajas y observar la presencia o no de datos outliers.
+
+#Al igual que con los histogramas se crean dos funciones: 1) Añadiendo la variable objetivo y otra sin añadirla
+
+boxplot_plot <- function(data, var){
+  var <- as.symbol(var)
+  
+  data_na_omit <- data %>% select(!!var) %>% filter(!is.na(!!var))
+
+  ggplot(data_na_omit, aes(y=!!var)) + geom_boxplot()}
+
+
+boxplot_var_target_plot <- function(data, var, target_var = "Response"){
+  var <- as.symbol(var)
+  target_var <- as.symbol(target_var)
+  
+  data_na_omit <- data %>% select(!!var, !!target_var) %>% filter(!is.na(!!var))
+
+  ggplot(data_na_omit, aes(y=!!var, x=!!target_var, col=!!target_var)) + geom_boxplot()}
+
+#Se representan los histogramas de las variables numéricas sin la variable objetivo
+
+
+Year_Birth_hist <- histogram_plot(Análisis_Personalidad, "Year_Birth")
+Income_hist <- histogram_plot(Análisis_Personalidad, "Income")
+Recency_hist <- histogram_plot(Análisis_Personalidad, "Recency")
+MntWines_hist <- histogram_plot(Análisis_Personalidad, "MntWines")
+MntFruits_hist <- histogram_plot(Análisis_Personalidad, "MntFruits")
+MntMeatProducts_hist <- histogram_plot(Análisis_Personalidad, "MntMeatProducts")
+MntFishProducts_hist <- histogram_plot(Análisis_Personalidad, "MntFishProducts")
+MntSweetProducts_hist <- histogram_plot(Análisis_Personalidad, "MntSweetProducts")
+MntGoldProds_hist <- histogram_plot(Análisis_Personalidad, "MntGoldProds")
+NumDealsPurchases_hist <- histogram_plot(Análisis_Personalidad, "NumDealsPurchases")
+NumWebPurchases_hist <- histogram_plot(Análisis_Personalidad, "NumWebPurchases")
+NumCatalogPurchases_hist <- histogram_plot(Análisis_Personalidad, "NumCatalogPurchases")
+NumStorePurchases_hist <- histogram_plot(Análisis_Personalidad, "NumStorePurchases")
+NumWebVisitsMonth_hist <- histogram_plot(Análisis_Personalidad, "NumWebVisitsMonth")
+
+# Organizar los gráficos en cuadrículas de 2x2 y uno de 1x2
+
+grid.arrange(Year_Birth_hist,
+             Income_hist , Recency_hist, 
+             MntWines_hist, nrow = 2, ncol=2)
+
+#Year_Birth --> Parece que sigue una normal, pero hay se observan outliers a la izquierda.
+#Income --> Parece que sigue una normal, pero hay se observan outliers a la derecha.
+#Recency --> No sigue una distribución normal
+#MntWines --> No sigue una distribución normal
+
+grid.arrange(MntFruits_hist, MntMeatProducts_hist, MntFishProducts_hist, MntSweetProducts_hist, nrow = 2, ncol=2)
+
+#Ninguna de estas cuatro sigue una distribución normal.
+
+grid.arrange(MntGoldProds_hist, NumDealsPurchases_hist, NumWebPurchases_hist, NumCatalogPurchases_hist, nrow = 2, ncol=2)
+
+#Estas variables tampoco parecen seguir una distribución normal. Observo que las variables NumDealsPurchases, NumWebPurchases y NumCatalogPurchases son variables discretas por lo que tiene sentido que las convierta a factor y luego los agrupe en menos niveles. Esta acción se llevará a cabo más adelante.
+
+grid.arrange(NumStorePurchases_hist, NumWebVisitsMonth_hist,
+             nrow = 1, ncol=2)
+
+#Con estas dos variables ocurre lo mismo, se convertiran a factor y se agruparan más adelante.
+
+#Resumiendo, parece que las únicas variables numéricas continuas que siguen una distribución normal son: Year_Birth e Income, pero se observan muchos outliers.
+
+print(Income_hist)
+print(Year_Birth_hist)
+
+#Termino con el análisis de las variables numéricas continuas procediendo con la exportación de los diagramas de cajas para confirmar la existencia de los outliers:
+
+Year_Birth_bp = boxplot_plot (Análisis_Personalidad,"Year_Birth")
+Income_bp = boxplot_plot (Análisis_Personalidad,"Income")
+Recency_bp = boxplot_plot (Análisis_Personalidad,"Recency")
+MntWines_bp = boxplot_plot (Análisis_Personalidad,"MntWines")
+MntFruits_bp = boxplot_plot (Análisis_Personalidad,"MntFruits")
+MntMeatProducts_bp = boxplot_plot (Análisis_Personalidad,"MntMeatProducts")
+MntFishProducts_bp = boxplot_plot (Análisis_Personalidad,"MntFishProducts")
+MntSweetProducts_bp = boxplot_plot (Análisis_Personalidad,"MntSweetProducts")
+MntGoldProds_bp = boxplot_plot (Análisis_Personalidad,"MntGoldProds")
+
+grid.arrange(Year_Birth_bp, Income_bp,Recency_bp,MntWines_bp, MntFruits_bp, MntMeatProducts_bp, MntFishProducts_bp, MntSweetProducts_bp, MntGoldProds_bp, nrow = 3, ncol=3)
+
+#Parece que existen outliers en todas las variables, a excepción de la variable "Recency" (Número de días desde la última compra del cliente)
+
+#Analicemos ahora, la supuesta variable objetivo (Response), a partir de histográmas y diagramas de cajas:
+
+Year_Birth_hvtp = histogram_var_target_plot (Análisis_Personalidad,"Year_Birth")
+Income_hvtp = histogram_var_target_plot (Análisis_Personalidad,"Income")
+Recency_hvtp = histogram_var_target_plot (Análisis_Personalidad,"Recency")
+MntWines_hvtp = histogram_var_target_plot (Análisis_Personalidad,"MntWines")
+MntFruits_hvtp = histogram_var_target_plot (Análisis_Personalidad,"MntFruits")
+MntMeatProducts_hvtp = histogram_var_target_plot (Análisis_Personalidad,"MntMeatProducts")
+MntFishProducts_hvtp = histogram_var_target_plot (Análisis_Personalidad,"MntFishProducts")
+MntSweetProducts_hvtp = histogram_var_target_plot (Análisis_Personalidad,"MntSweetProducts")
+MntGoldProds_hvtp = histogram_var_target_plot (Análisis_Personalidad,"MntGoldProds")
+
+grid.arrange(Year_Birth_hvtp, Income_hvtp,Recency_hvtp,nrow = 1, ncol=3)
+
+# En Recency observo algo interesante y lógico por otro lado: Los clientes con menos días desde su última compra, aceptaron más la oferta de la última campaña
+
+grid.arrange(MntWines_hvtp, MntFruits_hvtp, MntMeatProducts_hvtp,nrow = 1, ncol=3)
+
+# En MntWines observo que la oferta de la última campaña NO tuvo éxito.
+
+grid.arrange(MntFishProducts_hvtp, MntSweetProducts_hvtp, MntGoldProds_hvtp, nrow = 1, ncol=3)
+
+# En MntGoldProds observo que la oferta de la última campaña TUVO ÉXITO.
+
+#Analizo esta variable ahora con los diagramas de cajas:
+
+Year_Birth_bvtp = boxplot_var_target_plot (Análisis_Personalidad,"Year_Birth")
+Income_bvtp = boxplot_var_target_plot (Análisis_Personalidad,"Income")
+Recency_bvtp = boxplot_var_target_plot (Análisis_Personalidad,"Recency")
+MntWines_bvtp = boxplot_var_target_plot (Análisis_Personalidad,"MntWines")
+MntFruits_bvtp = boxplot_var_target_plot (Análisis_Personalidad,"MntFruits")
+MntMeatProducts_bvtp = boxplot_var_target_plot (Análisis_Personalidad,"MntMeatProducts")
+MntFishProducts_bvtp = boxplot_var_target_plot (Análisis_Personalidad,"MntFishProducts")
+MntSweetProducts_bvtp = boxplot_var_target_plot (Análisis_Personalidad,"MntSweetProducts")
+MntGoldProds_bvtp = boxplot_var_target_plot (Análisis_Personalidad,"MntGoldProds")
+
+grid.arrange(Year_Birth_bvtp, Income_bvtp,Recency_bvtp,nrow = 1, ncol=3)
+
+# Cosas interesantes: Según el diagrama, 1) los clientes con mayores ingresos, aceptaron más la oferta de la última campaña y 2) Lo que se comentó anteriormente, la oferta de la ultima campaña tuvo más éxito entre los clientes que compraron recientemente
+
+grid.arrange(MntWines_bvtp, MntFruits_bvtp, MntMeatProducts_bvtp,nrow = 1, ncol=3)
+
+#La conclusión que obtengo de estas gráficas es que, en líneas generales, se venden más productos cuando se lanza una oferta en una campaña. Lógico por otro lado.
+
+grid.arrange(MntFishProducts_bvtp, MntSweetProducts_bvtp, MntGoldProds_bvtp, nrow = 1, ncol=3)
+
+#Misma conclusión que arriba
+
+# Para reforzar las conclusiones anteriores, vamos llevar a cabo este mismo estudio pero omitiendo los outliers. En primer lugar, se crea la función que elimine los outliers de todas las variables numéricas continuas, a excepción de Recency, que ya hemos visto que no tiene outliers:
+
+outliers_univariantes <- function(data, var){
+  
+  # Identificar outliers
+   
+  var <- as.symbol(var)
+   
+  outliers <- boxplot.stats(data[[var]])$out
+ 
+  
+  return(data %>% filter(!(!!var %in% outliers)))
+}
+
+Year_Birth_wo_outliers = outliers_univariantes (Análisis_Personalidad,"Year_Birth")
+Income_wo_outliers = outliers_univariantes (Análisis_Personalidad,"Income")
+MntWines_wo_outliers = outliers_univariantes (Análisis_Personalidad,"MntWines")
+MntFruits_wo_outliers = outliers_univariantes (Análisis_Personalidad,"MntFruits")
+MntMeatProducts_wo_outliers = outliers_univariantes (Análisis_Personalidad,"MntMeatProducts")
+MntFishProducts_wo_outliers = outliers_univariantes (Análisis_Personalidad,"MntFishProducts")
+MntSweetProducts_wo_outliers = outliers_univariantes (Análisis_Personalidad,"MntSweetProducts")
+MntGoldProds_wo_outliers = outliers_univariantes (Análisis_Personalidad,"MntGoldProds")
+
+Year_Birth_bvtp_wooutliers = boxplot_var_target_plot (Year_Birth_wo_outliers,"Year_Birth")
+Income_bvtp_wooutliers = boxplot_var_target_plot (Income_wo_outliers,"Income")
+MntWines_bvtp_wooutliers = boxplot_var_target_plot (MntWines_wo_outliers,"MntWines")
+MntFruits_bvtp_wooutliers = boxplot_var_target_plot (MntFruits_wo_outliers,"MntFruits")
+MntMeatProducts_bvtp_wooutliers = boxplot_var_target_plot (MntMeatProducts_wo_outliers,"MntMeatProducts")
+MntFishProducts_bvtp_wooutliers = boxplot_var_target_plot (MntFishProducts_wo_outliers,"MntFishProducts")
+MntSweetProducts_bvtp_wooutliers = boxplot_var_target_plot (MntSweetProducts_wo_outliers,"MntSweetProducts")
+MntGoldProds_bvtp_wooutliers = boxplot_var_target_plot (MntGoldProds_wo_outliers,"MntGoldProds")
+
+grid.arrange(Year_Birth_bvtp_wooutliers, Income_bvtp_wooutliers,nrow = 1, ncol=2)
+
+# Se refuerza la idea de que los clientes con mayores ingresos, aceptaron más la oferta de la última campaña
+
+grid.arrange(MntWines_bvtp_wooutliers, MntFruits_bvtp_wooutliers, MntMeatProducts_bvtp_wooutliers,nrow = 1, ncol=3)
+
+# Se refuerza la idea de que, en líneas generales, se venden más productos cuando se lanza una oferta en una campaña. Lógico por otro lado.
+
+grid.arrange(MntFishProducts_bvtp_wooutliers, MntSweetProducts_bvtp_wooutliers, MntGoldProds_bvtp_wooutliers, nrow = 1, ncol=3)
+
+#Misma conclusion que el punto anterior.
+
+#Analicemos por último los histogramas sin los outliers:
+
+Year_Birth_hvtp_wooutliers = histogram_var_target_plot (Year_Birth_wo_outliers,"Year_Birth")
+Income_hvtp_wooutliers = histogram_var_target_plot (Income_wo_outliers,"Income")
+MntWines_hvtp_wooutliers = histogram_var_target_plot (MntWines_wo_outliers,"MntWines")
+MntFruits_hvtp_wooutliers = histogram_var_target_plot (MntFruits_wo_outliers,"MntFruits")
+MntMeatProducts_hvtp_wooutliers = histogram_var_target_plot (MntMeatProducts_wo_outliers,"MntMeatProducts")
+MntFishProducts_hvtp_wooutliers = histogram_var_target_plot (MntFishProducts_wo_outliers,"MntFishProducts")
+MntSweetProducts_hvtp_wooutliers = histogram_var_target_plot (MntSweetProducts_wo_outliers,"MntSweetProducts")
+MntGoldProds_hvtp_wooutliers = histogram_var_target_plot (MntGoldProds_wo_outliers,"MntGoldProds")
+
+grid.arrange(Year_Birth_hvtp_wooutliers, Income_hvtp_wooutliers,nrow = 1, ncol=2)
+
+# No parece que haya relación entre Year_Birth e Income con la variable Response
+
+grid.arrange(MntWines_hvtp_wooutliers, MntFruits_hvtp_wooutliers, nrow = 1, ncol=2)
+grid.arrange(MntMeatProducts_hvtp_wooutliers, MntFishProducts_hvtp_wooutliers,nrow = 1, ncol=2)
+grid.arrange(MntSweetProducts_hvtp_wooutliers, MntGoldProds_hvtp_wooutliers, nrow = 1, ncol=2)
+
+# El éxito de la oferta con el oro, parece más claro con este gráfico.
+
+# Analizamos ahora las correlaciones entre las variables numéricas
+```
+
+
+```{r Ejercicio 4.3: PREPROCESADO - Correlaciones entre variables}
+
+df_num <- select_if(Análisis_Personalidad, negate(is.factor))# nos quedamos con todas las variables que no son factor
+df_num$Year_Birth = NULL
+
+
+#Eliminamos las variables numéricas discretas, al ser variables de conteo y no tienen sentido para este análisis:
+
+df_num$NumDealsPurchases <- NULL        
+df_num$NumWebPurchases <- NULL 
+df_num$NumCatalogPurchases <- NULL 
+df_num$NumStorePurchases <- NULL 
+df_num$NumWebVisitsMonth <- NULL
+
+#Elimino también las variables ID, por no tener sentido en este análsis y la variable Dt_customer al ser una variable de tipo caracter:
+
+df_num$ID <- NULL
+df_num$Dt_Customer <- NULL
+
+correlacion_pearson_df = cor(df_num, use = "pairwise.complete.obs")
+
+corrplot(correlacion_pearson_df,
+         tl.cex=0.5,
+         tl.offset = 0.6,
+         type="upper",
+         method = "number", 
+         addCoef.col="grey", 
+         order = "AOE", 
+         number.cex=1)
+
+# Aunque hay covarianzas que son altas, no considero que destacan lo suficiente.A priori, parece que hay una relación importante entre los ingresos y la compra de vinos y los ingresos y la compra de carne.
+
+# Dado que existen muchos outliers y sobre todo una fuerte asimetría en la compra de carne y de vinos, aplicamos la transformación logarítmica` para que las distribuciones sean "más normales".
+
+# Se añade una pequeña perturbación a los valores reales.
+
+constante <- 0.01
+
+lista_num_log <- lapply(df_num, function(x) {
+  if (is.numeric(x)) {
+    log(x + constante)
+  } else {
+    x
+  }
+})
+
+#Paso la lista a data_frame:
+
+df_num_log <- as.data.frame(lista_num_log)
+
+#Calculo de nuevo la tabla de correlaciones:
+
+correlacion_pearson_df_log = cor(df_num_log, use = "pairwise.complete.obs")
+
+corrplot(correlacion_pearson_df_log,
+         tl.cex=0.5,
+         tl.offset = 0.6,
+         type="upper",
+         method = "number", 
+         addCoef.col="grey", 
+         order = "AOE", 
+         number.cex=1)
+
+#En la tabla se observa una fuerte relación entre las variables: MntMeatProducts, MntWines e Income.
+
+#Se forma un nuevo dataframe con las variables trasnformadas:
+
+df_cat <- select_if(Análisis_Personalidad, is.factor)
+
+# Dado que la variable objetivo anteriormente citada, no me ha dado unas conclusiones muy claras, voy a optar por crear una nueva variable objetivo, que resultará de la suma de las variables: NumWebPurchases, NumCatalogPurchases, NumStorePurchases. Por tanto:
+
+Num_Compras_Totales = Análisis_Personalidad$NumCatalogPurchases + Análisis_Personalidad$NumStorePurchases + Análisis_Personalidad$NumWebPurchases
+
+AP_New = cbind(ID=Análisis_Personalidad$ID,Year_Birth=Análisis_Personalidad$Year_Birth, Num_Compras_Totales, df_num_log,NumDealsPurchases=Análisis_Personalidad$NumDealsPurchases,NumWebVisitsMonth=Análisis_Personalidad$NumWebVisitsMonth,Dt_Customer=Análisis_Personalidad$Dt_Customer,df_cat)
+
+#Analizo la nueva variable objetivo. Empiezo por crear una nueva función que me permita conocer el número de veces que los niveles de la variable aparecen en la muestra.
+
+distinct_function_count <- function(data, var){
+  
+  var <- as.symbol(var)
+  counts_values_var <- data %>% group_by(!!var) %>% count %>% arrange(desc(n))
+  
+  total <- sum(counts_values_var$n)
+  counts_values_var <- counts_values_var %>% mutate(percentage = round(n / total * 100, 3))
+  
+  return(counts_values_var)
+}
+
+Num_Compras_Totales_wo_Agrupar=distinct_function_count (AP_New,"Num_Compras_Totales")
+print(Num_Compras_Totales_wo_Agrupar)
+
+#Para tener una referencia de como agrupar los valores en esta variable, calculo la media y la mediana. Elimino los datos ausentes previamente:
+
+data_na_omit_AP <- AP_New %>% select("Num_Compras_Totales") %>% filter(!is.na(AP_New$Num_Compras_Totales))
+Media_NCT_wo_Agrupar = mean(data_na_omit_AP$Num_Compras_Totales)
+Mediana_NCT_wo_Agrupar = median(data_na_omit_AP$Num_Compras_Totales)
+
+print(Media_NCT_wo_Agrupar) #Media = 12.48
+print(Mediana_NCT_wo_Agrupar) #Mediana = 12
+
+# Según la información obtenida, agrupo del siguiente modo:
+
+# --> Primer grupo: Compras menores o igual a 7 uds.
+# --> Segundo grupo: Compras entre 8 y 15 uds.
+# --> Tercer grupo: Compras superiores o igual a 16 uds.
+
+bucket <- 0:6
+
+AP_New <- AP_New %>% mutate(Num_Compras_Totales = if_else(Num_Compras_Totales %in% bucket, 7, Num_Compras_Totales))
+
+bucket_2 <- 8:14
+
+AP_New <- AP_New %>% mutate(Num_Compras_Totales = if_else(Num_Compras_Totales %in% bucket_2, 15, Num_Compras_Totales))
+
+bucket_3 <- 16:31
+
+AP_New <- AP_New %>% mutate(Num_Compras_Totales = if_else(Num_Compras_Totales %in% bucket_3, 32, Num_Compras_Totales))
+
+formattable(distinct_function_count(AP_New, "Num_Compras_Totales"))
+
+# Existen 157 datos ausentes, que se imputan como valores del grupo mayoritario:
+
+AP_New$Num_Compras_Totales <- replace(AP_New$Num_Compras_Totales, is.na(AP_New$Num_Compras_Totales),7)
+
+formattable(distinct_function_count(AP_New, "Num_Compras_Totales"))
+
+AP_New$Num_Compras_Totales = replace(AP_New$Num_Compras_Totales, AP_New$Num_Compras_Totales == 7, "Menor o igual a 7")
+AP_New$Num_Compras_Totales = replace(AP_New$Num_Compras_Totales, AP_New$Num_Compras_Totales == 32, "Mayor o igual a 16")
+AP_New$Num_Compras_Totales = replace(AP_New$Num_Compras_Totales, AP_New$Num_Compras_Totales == 15, "Entre 8 y 15 (ambos incluidos)")
+
+
+formattable(distinct_function_count(AP_New, "Num_Compras_Totales")) #Se obtiene en términos totales el sigueitne orden de mayor a menor: 1) <=7, 2) >=16 y 3) Entre 8 y 15
+
+# Paso esta variable a factor:
+
+AP_New$Num_Compras_Totales = as.factor(AP_New$Num_Compras_Totales)
+
+# Dibujo los histogramas y los diagramas de cajas de las variables numéricas ya transformadas en funcion de esta nueva variable objetivo:
+
+histogram_var_target_plot_NCT <- function(data, var, target_var = "Num_Compras_Totales", bins=50){
+  var <- as.symbol(var)
+  target_var <- as.symbol(target_var)
+  data_na_omit <- data %>% select(!!var, !!target_var) %>% filter(!is.na(!!var))
+  
+  g <- ggplot(data_na_omit,
+              aes(x=!!var, fill=!!target_var), col=!!target_var
+              ) + geom_histogram(bins=bins)
+}
+
+boxplot_var_target_plot_NCT  <- function(data, var, target_var = "Num_Compras_Totales"){
+  var <- as.symbol(var)
+  target_var <- as.symbol(target_var)
+  
+  data_na_omit <- data %>% select(!!var, !!target_var) %>% filter(!is.na(!!var))
+
+  ggplot(data_na_omit, aes(y=!!var, x=!!target_var, col=!!target_var)) + geom_boxplot()}
+
+#Elimino de nuevo los Outliers:
+
+Year_Birth_wo_outliers_NCT = outliers_univariantes (AP_New,"Year_Birth")
+Income_wo_outliers_NCT = outliers_univariantes (AP_New,"Income")
+MntWines_wo_outliers_NCT = outliers_univariantes (AP_New,"MntWines")
+MntFruits_wo_outliers_NCT = outliers_univariantes (AP_New,"MntFruits")
+MntMeatProducts_wo_outliers_NCT = outliers_univariantes (AP_New,"MntMeatProducts")
+MntFishProducts_wo_outliers_NCT = outliers_univariantes (AP_New,"MntFishProducts")
+MntSweetProducts_wo_outliers_NCT = outliers_univariantes (AP_New,"MntSweetProducts")
+MntGoldProds_wo_outliers_NCT = outliers_univariantes (AP_New,"MntGoldProds")
+
+#Extraigo las gráficas
+
+Year_Birth_hvtp_log = histogram_var_target_plot_NCT (Year_Birth_wo_outliers_NCT,"Year_Birth")
+Income_hvtp_log = histogram_var_target_plot_NCT (Income_wo_outliers_NCT,"Income")
+MntWines_hvtp_log = histogram_var_target_plot_NCT (MntWines_wo_outliers_NCT,"MntWines",bins=10)
+MntFruits_hvtp_log = histogram_var_target_plot_NCT (MntFruits_wo_outliers_NCT,"MntFruits",bins=10)
+MntMeatProducts_hvtp_log = histogram_var_target_plot_NCT (MntMeatProducts_wo_outliers_NCT,"MntMeatProducts",bins=10)
+MntFishProducts_hvtp_log = histogram_var_target_plot_NCT (MntFishProducts_wo_outliers_NCT,"MntFishProducts",bins=10)
+MntSweetProducts_hvtp_log = histogram_var_target_plot_NCT  (MntSweetProducts_wo_outliers_NCT,"MntSweetProducts",bins=10)
+MntGoldProds_hvtp_log = histogram_var_target_plot_NCT (MntGoldProds_wo_outliers_NCT,"MntGoldProds",bins=10)
+
+grid.arrange(Year_Birth_hvtp_log, Income_hvtp_log,nrow = 2, ncol=1)
+
+# Parece que las personas nacidas en los 70 son los que más compran
+# Información interesante: Los clientes con menos ingresos tienen a compras menores.
+
+grid.arrange(MntWines_hvtp_log, MntFruits_hvtp_log, nrow = 2, ncol=1)
+
+# Una obviedad: Mayores son los montos cuanto mayores son las compras.
+
+grid.arrange(MntMeatProducts_hvtp_log, MntFishProducts_hvtp_log,nrow = 2, ncol=1)
+
+# Misma conclusion
+
+grid.arrange(MntSweetProducts_hvtp_log, MntGoldProds_hvtp_log, nrow = 2, ncol=1)
+
+# Misma conclusion
+
+#Se procede ahora al estudio de los diagramas de cajas
+
+Year_Birth_bvtp_log = boxplot_var_target_plot_NCT (Year_Birth_wo_outliers_NCT,"Year_Birth")
+Income_bvtp_log = boxplot_var_target_plot_NCT (Income_wo_outliers_NCT,"Income")
+MntWines_bvtp_log = boxplot_var_target_plot_NCT (MntWines_wo_outliers_NCT,"MntWines")
+MntFruits_bvtp_log = boxplot_var_target_plot_NCT (MntFruits_wo_outliers_NCT,"MntFruits")
+MntMeatProducts_bvtp_log = boxplot_var_target_plot_NCT (MntMeatProducts_wo_outliers_NCT,"MntMeatProducts")
+MntFishProducts_bvtp_log = boxplot_var_target_plot_NCT (MntFishProducts_wo_outliers_NCT,"MntFishProducts")
+MntSweetProducts_bvtp_log = boxplot_var_target_plot_NCT (MntSweetProducts_wo_outliers_NCT,"MntSweetProducts")
+MntGoldProds_bvtp_log = boxplot_var_target_plot_NCT (MntGoldProds_wo_outliers_NCT,"MntGoldProds")
+
+grid.arrange(Year_Birth_bvtp_log, Income_bvtp_log,nrow = 2, ncol=1)
+
+#Parece, contradiciendo lo anterior, que los nacidos en los años 70 son los que compran menos.
+# Cuanto mayores sean los ingresos de los clientes, menos compras van a hacer. Una obviedad.
+
+grid.arrange(MntWines_bvtp_log, MntFruits_bvtp_log, nrow = 2, ncol=1)
+
+# Cuanto mayor sea las compras, mayor serán los montos. Una obviendad
+# Se observan outliers en la variable de la fruta
+
+grid.arrange(MntMeatProducts_bvtp_log,MntFishProducts_bvtp_log,nrow = 2, ncol=1)
+
+# Cuanto mayor sea las compras, mayor serán los montos. Una obviendad
+
+grid.arrange(MntSweetProducts_bvtp_log, MntGoldProds_bvtp_log, nrow = 2, ncol=1)
+
+# Cuanto mayor sea las compras, mayor serán los montos. Una obviendad
+# Se observan outliers en la variable de las dulces
+
+# Se observa que la distribución de los productos parece que son algo más "normales".
+```
+
+
+```{r Ejercicio 4.4: PREPROCESADO - Variables Categóricas}
+# Pasamos ahora al análisis de las variables categóricas, estas son, como hemos visto anteriormente, las siguientes: Education, Marital_Status, Kidhome, Teenhome, Complain y Response. Analicemos el número de veces que cada nivel aparece en la muestra en cada una de ellas:
+
+Education_Num_Levels = distinct_function_count (AP_New,"Education")
+formattable(Education_Num_Levels)
+
+#Tiene datos ausentes
+#El nivel "Basic" no supera el 5%.
+#El generar un nuevo nivel llamado "Others" que agrupe el nivel "Basic" con los "NA", no es buena idea, puesto que el nivel "Basic" superaria al "2nd Cycle" sesgando mucho la muestra.
+
+#Quizás tenga sentido generar un nuevo grupo llamado "Non University Degree" que agrupe los niveles "2nd cycle" y "Basic" y los NAs los incluya en el grupo mayoritario. De modo que:
+
+bucket_Ed <- c("Basic")
+
+AP_New <- AP_New %>% mutate(Education = if_else(Education %in% bucket_Ed,"2n Cycle", Education))
+Education_Num_Levels = distinct_function_count (AP_New,"Education")
+formattable(Education_Num_Levels)
+
+AP_New$Education = replace(AP_New$Education, AP_New$Education == "2n Cycle", "Non University Degree")
+Education_Num_Levels = distinct_function_count (AP_New,"Education")
+formattable(Education_Num_Levels)
+
+AP_New$Education <- replace(AP_New$Education, is.na(AP_New$Education),"Graduation")
+Education_Num_Levels = distinct_function_count (AP_New,"Education")
+formattable(Education_Num_Levels)
+
+# Por tanto tendré los siguintes niveles para la variable Education:
+
+# --> Graduation: 53.84%
+# --> PhD: 20.04%
+# --> Máster: 15.36%
+# --> Non University Degree: 10.76%
+
+AP_New$Education = as.factor(AP_New$Education)
+
+Marital_Status_Num_Levels = distinct_function_count (AP_New,"Marital_Status")
+formattable(Marital_Status_Num_Levels)
+
+# Como se comentaba al inicio, a la vista de todas las variables, quizás tenga sentido agrupar los niveles de este factor en 3: VIVE EN PAREJA, VIVE SOLO, NS/NC/OTHERS, de modo que:
+
+# Pareja: MARRIED + TOGETHER
+# Solos: ALONE + DIVORCED + WIDOW + SINGLE
+# NS/NC/OTHERS: ABSURD + YOLO
+
+#Veamos que resultados sale:
+
+bucket_MSN_1 <- c("Together")
+bucket_MSN_2 <- c("Divorced", "Widow", "Single")
+bucket_MSN_3 <- c("YOLO")
+
+AP_New <- AP_New %>% mutate(Marital_Status = if_else(Marital_Status %in% bucket_MSN_1,"Married", Marital_Status))
+Marital_Status_Num_Levels = distinct_function_count (AP_New,"Marital_Status")
+formattable(Marital_Status_Num_Levels)
+
+AP_New <- AP_New %>% mutate(Marital_Status = if_else(Marital_Status %in% bucket_MSN_2,"Alone", Marital_Status))
+Marital_Status_Num_Levels = distinct_function_count (AP_New,"Marital_Status")
+formattable(Marital_Status_Num_Levels)
+
+AP_New <- AP_New %>% mutate(Marital_Status = if_else(Marital_Status %in% bucket_MSN_3,"Absurd", Marital_Status))
+Marital_Status_Num_Levels = distinct_function_count (AP_New,"Marital_Status")
+formattable(Marital_Status_Num_Levels)
+
+AP_New$Marital_Status = replace(AP_New$Marital_Status, AP_New$Marital_Status == "Married", "Pareja")
+AP_New$Marital_Status = replace(AP_New$Marital_Status, AP_New$Marital_Status == "Alone", "Solos")
+AP_New$Marital_Status = replace(AP_New$Marital_Status, AP_New$Marital_Status == "Absurd", "NS/NC/OTHERS")
+Marital_Status_Num_Levels = distinct_function_count (AP_New,"Marital_Status")
+formattable(Marital_Status_Num_Levels)
+
+AP_New$Marital_Status = as.factor(AP_New$Marital_Status)
+
+#El % de NS/NC/OTHERS es muy bajo. Estas 4 observaciones las vamos a imputar al nivel "Pareja":
+
+bucket_MSN_4 <- c("NS/NC/OTHERS")
+
+AP_New <- AP_New %>% mutate(Marital_Status = if_else(Marital_Status %in% bucket_MSN_4,"Pareja", Marital_Status))
+Marital_Status_Num_Levels = distinct_function_count (AP_New,"Marital_Status")
+formattable(Marital_Status_Num_Levels)
+
+#Faltaría por tanto, imputar ahora los valores NAs. Haciendo una estimación rápida, se van a imputar 2/3 de los NAs a Pareja y 1/3 a Solos. De modo que:
+
+#Creo un dataframe con todos las observaciones NA de la variable "Marital_Status":
+df_NA_Marital = AP_New %>% filter (is.na(Marital_Status))
+
+#Reparto las observaciones en 2/3 y 1/3:
+
+n_2_3 = round(2/3*nrow(df_NA_Marital),0)
+n_1_3 = nrow(df_NA_Marital) - n_2_3
+
+df_NA_Marital_2_3 = head(df_NA_Marital,n_2_3)
+df_NA_Marital_1_3 = tail (df_NA_Marital,n_1_3) #Con tail cojo las últimas observaciones
+
+#Aplico la imputación de los valores NA:
+
+df_NA_Marital_2_3$Marital_Status <- replace(df_NA_Marital_2_3$Marital_Status, is.na(df_NA_Marital_2_3$Marital_Status),"Pareja")
+df_NA_Marital_2_3_Num_Levels = distinct_function_count (df_NA_Marital_2_3,"Marital_Status")
+formattable(df_NA_Marital_2_3_Num_Levels)
+
+df_NA_Marital_1_3$Marital_Status <- replace(df_NA_Marital_1_3$Marital_Status, is.na(df_NA_Marital_1_3$Marital_Status),"Solos")
+df_NA_Marital_1_3_Num_Levels = distinct_function_count (df_NA_Marital_1_3,"Marital_Status")
+formattable(df_NA_Marital_1_3_Num_Levels)
+
+#Creo un nuevo dataframe intermedio:
+
+df_int = AP_New
+
+#Creo con este dataframe intermedio, voy haciendo las imputaciones sobre todas las observaciones en función del ID:
+
+df_int <- df_int %>%
+  left_join(df_NA_Marital_2_3, by = "ID") %>%
+  mutate(Marital_Status = coalesce(Marital_Status.x, Marital_Status.y)) %>%
+  select(ID,Marital_Status)
+
+df_int <- df_int %>%
+  left_join(df_NA_Marital_1_3, by = "ID") %>%
+  mutate(Marital_Status = coalesce(Marital_Status.x, Marital_Status.y)) %>%
+  select(ID,Marital_Status)
+
+#Chequeo que no hay NA y que están todas las observaciones:
+
+nrow(df_int)
+sum(is.na(df_int$Marital_Status))
+
+#Renombro la variable imputada y la traslado a nuestro dataframe AP_New
+
+df_int <- df_int %>% rename (Marital_Status_woNA = Marital_Status)
+AP_New = cbind (AP_New,Marital_Status_woNA=df_int$Marital_Status_woNA)
+AP_New$Marital_Status = NULL
+
+#Declaro la nueva variable como factor
+AP_New$Marital_Status_woNA = as.factor(AP_New$Marital_Status_woNA)
+
+#Saco el resultado
+Marital_Status_woNA_Num_Levels = distinct_function_count (AP_New,"Marital_Status_woNA")
+formattable(Marital_Status_woNA_Num_Levels)
+
+#En pareja: 65%
+#Solos: 35%
+
+#Analizamos ahora el número de niños que tiene cada cliente en su hogar:
+
+Kidhome_Num_Levels = distinct_function_count (AP_New,"Kidhome")
+formattable(Kidhome_Num_Levels)
+
+# Los valores para esta variable son: 
+
+# --> 0: 57.72 %
+# --> 1: 40.13 %
+# --> 2: 2.14 %
+
+# Parece tener 2 niños en casa no es lo habitual, ya que solo un 2.143% de los clientes tienen 2 niños en casa. Agrupo 1 niño en casa con 2 niños y renombro los grupos en: "Sin niños" y "con niños"
+
+bucket_kh <- c("2")
+
+AP_New <- AP_New %>% mutate(Kidhome = if_else(Kidhome %in% bucket_kh, "1", Kidhome))
+Kidhome_Num_Levels = distinct_function_count (AP_New,"Kidhome")
+formattable(Kidhome_Num_Levels)
+
+Kidhome_Num_Levels = distinct_function_count (AP_New,"Kidhome")
+formattable(Kidhome_Num_Levels)
+
+AP_New$Kidhome = replace(AP_New$Kidhome, AP_New$Kidhome == "0", "Sin Niños")
+AP_New$Kidhome = replace(AP_New$Kidhome, AP_New$Kidhome == "1", "Con Niños")
+Kidhome_Num_Levels = distinct_function_count (AP_New,"Kidhome")
+formattable(Kidhome_Num_Levels)
+
+#Resultado:
+
+# --> Sin Niños: 57.72 %
+# --> Con Niños: 42.28 %
+
+AP_New$Kidhome = as.factor(AP_New$Kidhome)
+
+# Veamos ahora el número de adolescentes que tiene cada cliente en su hogar:
+
+Teenhome_Num_Levels = distinct_function_count (AP_New,"Teenhome")
+formattable(Teenhome_Num_Levels)
+
+#Procedo igual que con la variable anterior:
+
+bucket_th <- c("2")
+
+AP_New <- AP_New %>% mutate(Teenhome = if_else(Teenhome %in% bucket_th, "1", Teenhome))
+Teenhome_Num_Levels = distinct_function_count (AP_New,"Teenhome")
+formattable(Teenhome_Num_Levels)
+
+Teenhome_Num_Levels = distinct_function_count (AP_New,"Teenhome")
+formattable(Teenhome_Num_Levels)
+
+AP_New$Teenhome = replace(AP_New$Teenhome, AP_New$Teenhome == "0", "Sin Adolescentes")
+AP_New$Teenhome = replace(AP_New$Teenhome, AP_New$Teenhome == "1", "Con Adolescentes")
+Teenhome_Num_Levels = distinct_function_count (AP_New,"Teenhome")
+formattable(Teenhome_Num_Levels)
+
+#Resultado:
+
+# --> Sin Adolescentes: 51.7 %
+# --> Con Adolescentes: 48.3 %
+
+AP_New$Teenhome = as.factor(AP_New$Teenhome)
+
+#Pasamos a la variable complain que indica si el cliente se quejó en los últimos 2 años o no
+
+Complain_Num_Levels = distinct_function_count (AP_New,"Complain")
+formattable(Complain_Num_Levels)
+
+# Mantengo los datos como están, a pesar de que el % de registros del nivel "1" es sumamente bajo.
+
+# Acabo con la variable Response:
+
+Response_Num_Levels = distinct_function_count (AP_New,"Response")
+formattable(Response_Num_Levels)
+
+# Mantengo los datos como están.
+
+#Comprueba ahora si hay alguna variable categórica que tenga datos ausentes:
+
+summary(AP_New)
+
+#Se comprueba que no existen datos ausentes en las variables categóricas
+
+# Una vez analizadas las variables, hechas las imputacioens y las agrupaciones de los niveles, pasamos al análisis descriptivo de las mismas a través de las gráficos de barras:
+
+```
+
+
+```{r Ejercicio 4.5: PREPROCESADO - Variables Categóricas - Descripción gráfica}
+
+# El análsis descriptivo de las variables categóricas lo llevo a cabo por medio de la definición de dos funciones: 
+
+# 1) Que me genere un gráfico de barras Que me permita observar de manera clara como están distribuidos cada uno de los niveles de cada nivel en cada variable y me los ordene en el eje X decrecientemente y
+
+# 2) Una gráfica de barras que me permita observar la distribución que tiene cada nivel de la variable target en cada nivel de cada una de las variables.
+
+
+bar_plot <- function(data, var){
+
+  
+  var <- as.symbol(var)
+ 
+  g <- ggplot(data, aes(x = !!var)) + 
+    geom_bar(fill="lightblue",mapping=aes(x=reorder(!!var,!!var,length,decreasing=T))) +
+    geom_text(stat = "count", aes(label = after_stat(count)), vjust = -0.5, color = "red")
+  
+  return (g)
+
+}
+
+
+bar_target_var_plot <- function(data, var, target_var = "Num_Compras_Totales") {
+  var <- as.symbol(var)
+  target_var <- as.symbol(target_var)
+
+# Se saca el % por nivel de variable categórica en cada variable
+  
+  plot_data <- data %>% 
+    count(!!var, !!target_var) %>% 
+    group_by(!!var) %>% 
+    mutate(percent = n / sum(n))
+  
+  g <- ggplot(plot_data, aes(x = reorder(!!var, !!var, length, decreasing = TRUE), y = percent, fill = !!target_var)) +
+    geom_bar(stat = "identity") +
+    geom_label(aes(label = scales::percent(percent)),
+               position = position_stack(vjust = 0.5), color = "red",
+               show.legend = FALSE) +
+    ylab("Porcentaje") +
+    xlab ("Variable")
+  
+  return(g)
+}
+
+
+BarP_Education <- bar_plot(AP_New, "Education")
+BarPT_Education <- bar_target_var_plot(AP_New, "Education")
+
+BarP_Education
+BarPT_Education
+
+# Varias conclusiones interesantes en este gráfico:
+
+# --> En el grupo de "Non University Degree": Más de un 60% de los clientes realizan menos de 8 compras.
+# --> En el resto de grupos (los clientes con estudios) si que es cierto que el número de compras es más homogeneo.
+# --> En todos los grupos, en nivel "Mayor o igual a 16" supera a los "Entre 8 y 15"
+
+# Procedo con el mismo análisis en la variable de estado civil
+
+BarP_Marital_Status_woNA <- bar_plot(AP_New, "Marital_Status_woNA")
+BarPT_Marital_Status_woNA <- bar_target_var_plot(AP_New, "Marital_Status_woNA")
+
+BarP_Marital_Status_woNA
+BarPT_Marital_Status_woNA
+
+# --> Realmente ambos grupos se comportan de manera muy similar
+# --> En todos los grupos, en nivel "Mayor o igual a 16" supera a los "Entre 8 y 15"
+
+#Paso a estudiar los clientes en función de si tienen niños en casa:
+
+BarP_Kidhome <- bar_plot(AP_New, "Kidhome")
+BarPT_Kidhome <- bar_target_var_plot(AP_New, "Kidhome")
+
+BarP_Kidhome
+BarPT_Kidhome
+
+# Dos conclusiones importantes:
+
+#1) Los clientes con grupos con niños suelen comprar mucho menos.
+#2) os clientes sin niños compran en más de un 50% más de 16 compras!!!
+
+#Paso a estudiar los clientes en función de si tienen adolesentes en casa:
+
+BarP_Teenhome <- bar_plot(AP_New, "Teenhome")
+BarPT_Teenhome <- bar_target_var_plot(AP_New, "Teenhome")
+
+BarP_Teenhome
+BarPT_Teenhome
+
+# Curioso: En el grupo de los clientes que no tienen adolescentes en casa, a diferencia de lo que se pudiera sospechar, el nivel mayoritario en la variable objetivo es: "Menor o igual a 7"
+
+#Paso a estudiar los clientes que se han quejado o no en los últimos dos años:
+
+BarP_Complain<- bar_plot(AP_New, "Complain")
+BarPT_Complain <- bar_target_var_plot(AP_New, "Complain")
+
+BarP_Complain
+BarPT_Complain
+
+#Principal conclusión: Entre los que se quejaron, compraron poco, SEGURAMENTE DEJARIAN DE COMPRAR HACE TIEMPO!
+
+#Por último estudiamos la variable "Response":
+
+BarP_Response<- bar_plot(AP_New, "Response")
+BarPT_Response <- bar_target_var_plot(AP_New, "Response")
+
+BarP_Response
+BarPT_Response
+
+#Principal conclusión: En el grupo de los que aceptaron la última campaña, el número de comprar mayoritario es "Mayor o igual a 16"
+
+```
+```{r 4.6. PREPROCESADO - Variables numéricas - Imputación}
+
+# Tras la realización del análisis descriptivo, se realiza la imputación de valores faltantes de las variables numéricas
+
+# Pienso que puede ser interesante conocer la correlación únicamente entre las variables de los montos de los prouctos, para distinguir tipos de productos.
+
+#Parto del dataframe "normalizado":
+
+df_num_log <- as.data.frame(AP_New)
+
+df_prod = df_num_log %>% select (MntWines,MntFruits,MntMeatProducts,MntFishProducts,MntSweetProducts,MntGoldProds)
+
+#Calculo de nuevo la tabla de correlaciones:
+
+correlacion_pearson_df_log = cor(df_prod, use = "pairwise.complete.obs")
+
+corrplot(correlacion_pearson_df_log,
+         tl.cex=0.5,
+         tl.offset = 0.6,
+         type="upper",
+         method = "number", 
+         addCoef.col="grey", 
+         order = "AOE", 
+         number.cex=1)
+
+#Conclusiones: No saco conclusiones más interesantes que la que ya conocía: Los montos de carne y vino están muy relacionados, pero poco mas, dado que el resto de variables tienen una covarianza alta (todas menor de 0.6)
+
+# Durante el análisis descriptivo de las variables cuantitativas se ha visto que existe una fuerte correlación lineal entre las variables "MntWines", "MntMeatProducts" e `Incomes`. Así, se plantea una regresión lineal con estas tres variables. Solo MntMeatProducts carece de datos ausentes.
+
+#Creo que lo adecuado sería hacerlo paso por paso, es decir, sacar los valores de vino por medio de los de la carne, mediante una regresión lineal simple y luego los de los ingresos por medio de otra regresión lineal múltiple.
+
+# De modo que:
+
+Vino_non_nulls_df <- AP_New %>% 
+                          select(ID, MntWines , MntMeatProducts) %>% 
+                          filter(!is.na(MntWines))
+
+lm_vino <- lm(MntWines ~ MntMeatProducts, data=Vino_non_nulls_df %>% select(-ID))
+
+summary(lm_vino)
+
+#El R^2 me sale muy bajo (0.65), sin embargo observa del siguiente gráfico que efecivimanete existe una relación entre ambas variables:
+
+xy_vino_carne = xyplot(MntWines ~ MntMeatProducts, type="p", pch=16, 
+  auto.key=list(border=TRUE), par.settings=simpleTheme(pch=16), 
+  scales=list(x=list(relation='same'), y=list(relation='same')), data=AP_New)
+
+xy_vino_carne
+
+# Supongo que será por los datos outliers, por lo que trato de elimnarlos. Elimino los datos outliers de las dos variables:
+
+Vino_non_nulls_non_Outl_df = outliers_univariantes (Vino_non_nulls_df,"MntWines")
+Vino_Carne_non_nulls_non_Outl_df = outliers_univariantes (Vino_non_nulls_non_Outl_df,"MntMeatProducts")
+
+lm_vino_2 <- lm(MntWines ~ MntMeatProducts , data=Vino_Carne_non_nulls_non_Outl_df %>% select(-ID))
+
+summary(lm_vino_2)
+
+#El R^2 mejora pero no mucho.: 0,67 en este caso.
+
+#No obstante, dado que las variables de la regresión son significativas al 99% y que la covarianza salia de 0.81, procedo a la regresión lineal simple de estas variables para la imputación de los valores NAs de la variable "MntWines":
+
+AP_New <- AP_New %>% 
+          mutate(Vino_IMPUTE = round(predict.lm(lm_vino_2, newdata = AP_New %>% select(MntMeatProducts)),0))
+AP_New <- mutate(AP_New, MntWines := coalesce(MntWines, Vino_IMPUTE))
+AP_New$Vino_IMPUTE <- NULL
+
+summary(AP_New)
+
+#Como comentaba anteriormente, una vez imputado los datos del vino, procedo a imputar los datos faltantes de los ingresos:
+
+#En primer lugar voy a crear un nuevo dataset eliminando los valores NAs de la variable Income:
+
+Ingresos_non_nulls_df <- AP_New %>% 
+                          select(ID, Income, MntWines , MntMeatProducts) %>% 
+                          filter(!is.na(Income))
+
+
+#Ahora hago la regresión con este nuevo dataset:
+
+RegModel_Ingresos_CarneyVino <- lm(Income~MntMeatProducts+MntWines, 
+  data=Ingresos_non_nulls_df)
+summary(RegModel_Ingresos_CarneyVino)
+
+#R^2 vuelve a no ser muy alto: 0.62, pero los coeficientes son significativos... Analizo los datos por medio de gráfico XY:
+
+xy_Ingresos_CarneyVino = xyplot(MntMeatProducts + MntWines ~ Income, type="p", pch=16, 
+  auto.key=list(border=TRUE), par.settings=simpleTheme(pch=16), 
+  scales=list(x=list(relation='same'), y=list(relation='same')), 
+  data=Ingresos_non_nulls_df)
+
+xy_Ingresos_CarneyVino
+
+#Se observa una fuerte relación entre las 3 variables. Como anteriormente, elimino outliers de las variables para tratar de mejorar R^2:
+
+Ingresos_non_nulls_non_Outl_df = outliers_univariantes (Ingresos_non_nulls_df,"Income")
+Ingresos_Vino_non_nulls_non_Outl_df = outliers_univariantes (Ingresos_non_nulls_non_Outl_df,"MntWines")
+Ingresos_Vino_Carne_non_nulls_non_Outl_df = outliers_univariantes (Ingresos_Vino_non_nulls_non_Outl_df,"MntMeatProducts")
+
+RegModel_Ingresos_CarneyVino_2 <- lm(Income~MntMeatProducts+MntWines, 
+  data=Ingresos_Vino_Carne_non_nulls_non_Outl_df)
+
+summary(RegModel_Ingresos_CarneyVino_2)
+
+#R^2 = 0.68, pero todos los coeficientes son significativos al 99%. Represento gráfico de puntos con recta de regresión:
+
+Coef1 = RegModel_Ingresos_CarneyVino_2[["coefficients"]][["MntMeatProducts"]]
+Coef2 = RegModel_Ingresos_CarneyVino_2[["coefficients"]][["MntWines"]]
+
+plot(x=Coef1*Ingresos_Vino_Carne_non_nulls_non_Outl_df$MntMeatProducts+Coef2*Ingresos_Vino_Carne_non_nulls_non_Outl_df$MntWines, y=Ingresos_Vino_Carne_non_nulls_non_Outl_df$Income, main="Ingresos vs Carne + Vino", pch=20, col = "red", xlab="Variables independientes", ylab="Ingresos")
+points(Coef1*Ingresos_Vino_Carne_non_nulls_non_Outl_df$MntMeatProducts+Coef2*Ingresos_Vino_Carne_non_nulls_non_Outl_df$MntWines, fitted(RegModel_Ingresos_CarneyVino_2), col='blue', pch=20, type = "l")
+
+#En el gráfico anterior se observa la fuerte correlación que hay entre las variables: MntMeatProducts y MntWines con Income.
+
+#Dada esta regresión, porcedo a imputar los valores ausentes de la variable "Income"
+
+AP_New <- AP_New %>% 
+          mutate(Ingresos_IMPUTE = predict.lm(RegModel_Ingresos_CarneyVino_2, newdata = AP_New %>% select(MntMeatProducts,MntWines)))
+AP_New <- mutate(AP_New, Income := coalesce(Income, Ingresos_IMPUTE))
+AP_New$Ingresos_IMPUTE<- NULL
+
+summary(AP_New)
+
+#Imputo los valores NAs a los montantes de los productos MntFruits, MntFishProducts y MntSweetProducts por medio de las medianas de los demás valores existentes eliminando los outliers. De modo que:
+
+#Creo una función para sacarla mediana de cada variable obviando los outliers:
+
+Imputación_Var <- function(data,vari){
+  
+vari <- as.symbol(vari)
+NO_Out = outliers_univariantes(data,var=vari)
+mediana_df <- NO_Out %>% 
+                               select(!!vari) %>% 
+                               filter(!is.na(!!vari)) %>%
+                               summarize(MEDIANA = median(!!vari))
+
+return (mediana_df)
+}
+
+#Voy impuntando con las medianas obtenidas:
+
+Mediana_Fruta = Imputación_Var (AP_New, "MntFruits")
+AP_New <- mutate(AP_New, MntFruits := coalesce(MntFruits, Mediana_Fruta$MEDIANA))
+
+Mediana_Pescado = Imputación_Var (AP_New, "MntFishProducts")
+AP_New <- mutate(AP_New, MntFishProducts := coalesce(MntFishProducts, Mediana_Pescado$MEDIANA))
+
+Mediana_Dulce = Imputación_Var (AP_New, "MntSweetProducts")
+AP_New <- mutate(AP_New, MntSweetProducts := coalesce(MntSweetProducts, Mediana_Dulce$MEDIANA))
+
+#Chequeo que no queda ningun dato ausente en estas variables:
+
+summary(AP_New)
+
+
+#Por tanto, solo quedan vallores NAs en la variable NumWebVisitsMonth, la cual procedo a analaizar:
+
+# Veamos como se relacionan ambas variables:
+
+df_web_imp <- Análisis_Personalidad %>%  filter(!is.na(NumWebPurchases) & !is.na(NumWebVisitsMonth)) %>% select(ID,NumWebPurchases,NumWebVisitsMonth) %>% 
+                               group_by(NumWebPurchases) %>%
+                               summarize(VISITAS_MEDIA = round(mean(NumWebVisitsMonth),0))
+
+AP_New_Prueba = AP_New
+AP_New_Prueba <-  left_join(Análisis_Personalidad, df_web_imp)
+AP_New_Prueba <- mutate(AP_New_Prueba, NumWebVisitsMonth := coalesce(NumWebVisitsMonth, VISITAS_MEDIA))
+AP_New_Prueba$VISITAS_MEDIA <- NULL
+summary(AP_New_Prueba)
+
+#Siguen quedando 9 datos ausentes, analizo la variable en su conjunto:
+
+df_web_imp_2 = distinct_function_count(AP_New_Prueba,"NumWebVisitsMonth")
+formattable (df_web_imp_2 )
+
+#Los 9 datos NAs, los imputo al nivel mayoritario, este es, NumWebVisitsMonth = 7, de modo que:
+
+AP_New_Prueba$NumWebVisitsMonth <- replace(AP_New_Prueba$NumWebVisitsMonth, is.na(AP_New_Prueba$NumWebVisitsMonth),7)
+
+#Ahora traslado esta variable a mi dataset de trabajo, este es, AP_New. De modo que:
+
+AP_New = cbind (AP_New,Visitas_web=AP_New_Prueba$NumWebVisitsMonth)
+
+#Elimino la variable antigua NumWebVisitsMonth de AP_New
+
+AP_New$NumWebVisitsMonth = NULL
+
+
+#Se comprueba que ya no tenemos datos NAs en todo nuestro dataset:
+
+summary(AP_New)
+
+#Volvemos todas las variables numéricas a su estado original, es decir, le aplocamos la función exponencial. De modo que:
+
+AP_exp <- AP_New %>%
+  select(Income,Recency,MntWines,MntFruits,MntMeatProducts,MntFishProducts,MntSweetProducts,MntGoldProds) %>%
+  mutate(across(where(is.numeric), ~ exp(.x)))
+
+AP_New = AP_New %>%
+  select(-Income,-Recency,-MntWines,-MntFruits,-MntMeatProducts,-MntFishProducts,-MntSweetProducts,-MntGoldProds)
+
+AP_New = cbind(AP_New,AP_exp)
+
+
+
+
+```
+
+```{r 4.7. PREPROCESADO - Instancias anómalas}
+
+#Antes de analizar las instancias anómalas y en base a lo estudiado, voy a simplificar el dataset:
+
+# En primer lugar voy a eliminar las variables Dt_Customer y Recency, agrupandolas en otra llamada "Dias_Registro_ult_compra" que me va a calcular el número de días que en cliente ha tenido su usuario activo:
+
+Fecha = as.Date(AP_New$Dt_Customer, format = "%d-%m-%Y")
+Dias_Registro_ult_compra = as.Date("28-02-2024",format = "%d-%m-%Y") - Fecha - AP_New$Recency
+
+
+#Incluyo esta variable en el data set y elimino: Dt_Customer y Recency
+
+AP_New = cbind(AP_New,Días_Registro_ult_compra = Dias_Registro_ult_compra)
+
+#Paso los valores de esta nueva variable a numeros:
+AP_New$Días_Registro_ult_compra = as.numeric(AP_New$Días_Registro_ult_compra)
+
+#Analizo esta nueva variable por medio de las funciones anteriores que me permitían obtener los hitogramas y los diagramas de cajas:
+
+# Elimino de nuevo los Outliers:
+
+Días_Registro_ult_compra_wo_outliers_NCT = outliers_univariantes (AP_New,"Días_Registro_ult_compra")
+
+#Extraigo las gráficas
+
+Días_Registro_ult_compra_hvtp_log = histogram_var_target_plot_NCT (Días_Registro_ult_compra_wo_outliers_NCT,"Días_Registro_ult_compra")
+Días_Registro_ult_compra_bvtp_log = boxplot_var_target_plot_NCT (Días_Registro_ult_compra_wo_outliers_NCT,"Días_Registro_ult_compra")
+
+grid.arrange(Días_Registro_ult_compra_hvtp_log, Días_Registro_ult_compra_bvtp_log,nrow = 2, ncol=1)
+
+#Del hitograma obtengo una gráfica que aparentemente es "normal". De este gráfico se aprecia, como no puede ser de otro modo, como, conforme aumenta los días de usuario activo, el nivel "mayor o igual que 16" va en aumento.
+
+#Del diagrama de cajas observo que: los intervalos intercuartilicos de "mayor o igual que 16" y "entre 8 y 15" se parecen mucho, quizás la mediana es algo mayor en el primer nivel.
+
+AP_New$Dt_Customer = NULL
+AP_New$Recency = NULL
+
+#Por otra, parte, se elimina del dataset también la variable "Complain", dado que, no aportaba gran información debido la gran diferencia de registros entre ambos niveles:
+
+AP_New$Complain = NULL
+
+
+
+## Inspección de datos anómalos
+
+#A lo largo del análisis realizado se ha observado de forma univariante la existencia de varios valores atípicos. Se plantea el uso del algoritmo **Isolation Forest** para identificar qué instancias pueden ser consideradas como anómalas.
+
+# Comenzamos creando una copia del dataset AP_New y eliminando la variable ID:
+
+df_anomaly <- AP_New
+df_anomaly$ID <- NULL #Se quita para el calculo del score para meter un sesgo.
+
+# Se establece una semilla para la generación de números aleatorios:
+
+set.seed(123)  
+
+# Se utiliza la fiunción Isolation Forest para detectar anomalías identificando observaciones inusuales o atípicas en un conjunto de dato
+
+clf <- isoforest <- isolationForest$new(sample_size = as.integer(nrow(AP_New)),
+                                        num_trees = 100,
+                                        seed = 123
+                                        )
+
+# Se ajusta el modelo Isolation Forest al conjunto de datos df_anomaly
+
+clf$fit(dataset = df_anomaly)
+
+#Se calcula el puntaje de anomalía para cada muestra en el conjunto de datos original (AP_New). El puntaje de anomalía indica qué tan inusual es cada muestra.
+
+
+prob_anomaly <- clf$predict(data = AP_New)$anomaly_score
+
+#e agrega una nueva columna llamada score al dataframe AP_New, que contiene los puntajes de anomalía calculados previamente.
+
+AP_New <- mutate(AP_New, score = prob_anomaly)
+
+#Empleamos un histograma para fijar un umbral para identificar instancias anómalas.
+
+ggplot(AP_New, aes(x=score)) + geom_histogram(bins=50)
+
+summary (AP_New$score) 
+
+#En este caso, dado que el 3er cuartil es 0,5734, se elige un umbral de 0.58. Así, si el score es superior a dicho valor se clasifica como instancia anómala.
+
+threshold <- 0.58
+
+# Se crea una nueva variable ("Cluster") que será 1 si la instancia es anómala y 0 si no lo es. Se elimna la variable "score":
+
+AP_New <- mutate(AP_New , cluster = if_else(score > threshold, 1, 0))
+AP_New$cluster <- as.factor(AP_New$cluster)
+AP_New$score <- NULL
+
+#Veamos como mejoran las variables numéricas mediant diagrama de cajas:
+
+Bvtp_cluster_Year_Birth = boxplot_var_target_plot_NCT (AP_New,"Year_Birth","cluster")
+Bvtp_cluster_Income = boxplot_var_target_plot_NCT (AP_New,"Income","cluster")
+Bvtp_cluster_MntWines = boxplot_var_target_plot_NCT (AP_New,"MntWines","cluster")
+Bvtp_cluster_MntFruits = boxplot_var_target_plot_NCT (AP_New,"MntFruits","cluster")
+Bvtp_cluster_MntMeatProducts = boxplot_var_target_plot_NCT (AP_New,"MntMeatProducts","cluster")
+Bvtp_cluster_MntFishProducts = boxplot_var_target_plot_NCT (AP_New,"MntFishProducts","cluster")
+Bvtp_cluster_MntSweetProducts = boxplot_var_target_plot_NCT (AP_New,"MntSweetProducts","cluster")
+Bvtp_cluster_MntGoldProds = boxplot_var_target_plot_NCT (AP_New,"MntGoldProds","cluster")
+Bvtp_cluster_Días_Registro_ult_compra = boxplot_var_target_plot_NCT (AP_New,"Días_Registro_ult_compra","cluster")
+
+grid.arrange(Bvtp_cluster_Year_Birth, Bvtp_cluster_Income,nrow = 2, ncol=1)
+grid.arrange(Bvtp_cluster_MntWines, Bvtp_cluster_MntFruits, nrow = 2, ncol=1)
+grid.arrange(Bvtp_cluster_MntMeatProducts,Bvtp_cluster_MntFishProducts,nrow = 2, ncol=1)
+grid.arrange(Bvtp_cluster_MntSweetProducts, Bvtp_cluster_MntGoldProds, nrow = 2, ncol=1)
+Bvtp_cluster_Días_Registro_ult_compra
+
+
+summary(AP_New)
+
+
+#Comparamos medias para cada variable entre instancias anómalas e instancias no anómalas:
+
+media_cluster_AP <- AP_New %>% 
+                    select(cluster,
+                           Year_Birth, 
+                           Income,
+                           MntWines, 
+                           MntFruits, 
+                           MntMeatProducts,
+                           MntFishProducts,
+                           MntSweetProducts,
+                           MntGoldProds,
+                           Días_Registro_ult_compra) %>%
+                    group_by(cluster) %>% 
+                    summarize(N = n(),
+                              MEAN_Year_Birth = mean(Year_Birth),
+                              MEAN_Income = mean(Income),
+                              MEAN_MntWines = mean(MntWines),
+                              MEAN_MntFruits = mean(MntFruits),
+                              MEAN_MntMeatProducts = mean(MntMeatProducts),
+                              MEAN_MntFishProducts = mean(MntFishProducts),
+                              MEAN_MntSweetProducts = mean(MntSweetProducts),
+                              MEAN_MntGoldProds = mean(MntGoldProds),
+                              MEAN_Días_Registro_ult_compra = mean(Días_Registro_ult_compra)
+                    )
+
+formattable(media_cluster_AP)
+
+# Se observa una gran diferencia en las siguientes variables relacionadas con los productos, dado que contienen un gran número de outliers.
+
+# Finalmente, eliminamos las instancias marcadas como anómalas:
+
+AP_Final <- AP_New %>% filter(cluster == 0)
+AP_Final$cluster = NULL
+
+formattable(distinct_function_count(AP_Final, "Num_Compras_Totales"))
+
+summary(AP_Final)
+
+```
+
+```{r 4.8. PREPROCESADO - Equilibrado de la muestra}
+
+#`ADASYN` y `MUESTREO DEL CUBO` son los dos métodos que vamos a emplear para equilibrar la muestra.
+
+#Elimino l variable ID:
+
+AP_Final$ID <- NULL
+
+#Utilizaremos el muestreo del cubo para obtener una muestra de la clase mayoritaria (**n=877**) y el Adasyn para realizar oversampling sobre las clases minoritarias.
+
+#- Paso 1: undersampling clase mayoritaria mediante el muestreo del cubo
+
+#En primer lugar, hay que tener en cuenta las variables de equilibrio (en este caso las variables cualitativas).
+
+# Datos donde efectuamos selección de las comprar menores o iguales a 7:
+
+df_7 <- AP_Final %>% filter(Num_Compras_Totales == "Menor o igual a 7")
+
+# Número de compras menores o iguales a 7
+
+df_menor_8 <- nrow(df_7)
+
+# Creamos las variables indicadores para cada una de las variables de equilibrio. 
+
+# Variable que vale 1 en todas las partes (para comprobar la estimación del tamaño poblacional)
+
+UNO = rep(1, df_menor_8) 
+
+# Variables cuantitativas
+
+X1 <- df_7 [ ,c("Year_Birth", "Income", "MntWines", "MntFruits", "MntMeatProducts","MntFishProducts","MntSweetProducts","MntGoldProds","Días_Registro_ult_compra")]
+
+# Variables cualitativas - creación de las variables indicadoras
+
+X2 <- disjunctive(df_7$Education)
+colnames(X2) <- levels(df_7$Education)
+
+X3 <- disjunctive(df_7$Marital_Status_woNA)
+colnames(X3) <- levels(df_7$Marital_Status_woNA)
+
+X4 <- disjunctive(df_7$Kidhome)
+colnames(X4) <- levels(df_7$Kidhome)
+
+X5 <- disjunctive(df_7$Teenhome)
+colnames(X5) <- levels(df_7$Teenhome)
+
+X6 <- disjunctive(df_7$Response)
+colnames(X6) <- levels(df_7$Response)
+
+# Matriz de diseño
+X <- as.matrix( cbind( UNO, X1, X2, X3, X4, X5 ) )
+
+# Tamaño de la muestra
+sample_df_7 <- 640
+
+# Probabilidades de inclusión
+pik = rep( sample_df_7 / df_menor_8, df_menor_8 )
+
+# extracción de la muestra
+set.seed(123)
+s = samplecube(X, pik, method = 2, order = 1, comment = FALSE)
+
+# Generación de fichero resultante
+sample_df_final = cbind( df_7, s )
+sample_df_final <- sample_df_final[ sample_df_final$s == 1, ]
+sample_df_final$s  <- NULL
+
+summary(sample_df_final)
+
+#Calidad de la muestra obtenida. Se analiza del siguiente modo:
+
+Totales <- apply(X, 2, sum)
+Horvitz.Thompson <- apply(X * s / pik, 2, sum)
+calidad <- cbind.data.frame(Totales, Horvitz.Thompson)
+calidad$Desv.Abs. <- round(calidad$Totales - calidad$Horvitz.Thompson, 2)
+calidad$Desv.Rel. <- round((calidad$Totales / calidad$Horvitz.Thompson - 1) *100, 2)
+
+formattable(calidad)
+
+# La mayor desviación relativa se tiene con la variable de la fruta (un 2.31%), por lo que se puede concluir que la calidad de la muestra es aceptable.
+
+# PASO 2: obtenemos muestra con todas las instancias de las clases minoritarias + muestreo clase mayoritaria
+
+df_8_15 <- AP_Final %>% filter(Num_Compras_Totales == "Entre 8 y 15 (ambos incluidos)")
+df_16 <- AP_Final %>% filter(Num_Compras_Totales == "Mayor o igual a 16")
+
+df_sample <- bind_rows(sample_df_final, df_8_15,df_16)
+
+# PASO 3: incrementamos las muestras de las clases minoritarias haciendo uso del algoritmo Adasyn
+
+
+df_equilibrio_cube_adasyn <- AdasynClassif(Num_Compras_Totales ~ ., df_sample,
+                                           k=20, # número de vecinos
+                                           baseClass = c("Menor o igual a 7"), # identifica la clase mayoritaria
+                                           dist = "HEOM") # métrica para tener en cuenta variables numéricas y nominales
+
+formattable(distinct_function_count(df_equilibrio_cube_adasyn, "Num_Compras_Totales"))
+
+# Por la tabla anterior, se demuestra que la muestra queda equilibrada
+
+```
+
+```
+
