@@ -1,0 +1,447 @@
+---
+title: "Minería de datos I"
+author: "Marta Blanco"
+date: "2024-12-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Librarías 
+```{r}
+library(knitr)
+library(kableExtra) # tablas 
+library(magrittr) # operaro %$% usado
+# library(tictoc) # medir tiempos de ejecución
+
+suppressMessages(library(tidyverse)) # dplyr, tydyr, ggplot
+suppressMessages(library(cowplot)) # composición de gráficos
+suppressMessages(library(caret)) # machine learning
+
+# librerías dependientes de la plataforma
+if(.Platform$OS.type == "unix"){
+  suppressMessages(library(doMC)) # procesamiento en paralelo
+  # registerDoMC(cores = 3)
+} else {
+  suppressMessages(library(doParallel))
+  # registerDoParallel(cores = detectCores()-3) 
+  
+}
+```
+# Dataset
+La muestra de entrenamiento (train) y de test contienen 76.480 y 5.873 observaciones respectivamente. La información contenida en cada data set es la siguiente:
+
+- id: identificador del inmueble
+- date: fecha de publicación del anuncio
+- time: la hora en que se publicó el anuncio
+- geo_lat: Latitud
+- geo_lon: Longitud
+- region: - Región de Rusia. Se han considerado 85 áreas en el país.
+- building_type: tipo de fachada: 0-Otro, 1-Panel, 2-Monolítico, 3-Ladrillo, 4-Blocky, 5-Madera
+- object_type: tipo de apartamento: 1-Mercado secundario de bienes raíces, 2-Edificio nuevo
+- Level: Piso del apartamento
+- Levels: Número de plantas del edificio
+- rooms: número de habitaciones; si el valor es “-1”, significa “apartamento tipo estudio”.
+- area: el área total del apartamento
+- kitchen_area: Área de cocina
+- price: Precio en rublos -> cambio a euros (1 euro equivale a 90,06 rublos ruso)
+
+```{r}
+# borramos los elementos del global environment
+rm(list = ls())
+
+# la variable numeric tiene valores que producen
+# "NAs producidos por enteros excedidos"
+# por eso la leemos como numeric
+
+# durante el análisis la variable price era causa de errores si no fuerzo el tipo
+# por defecto se lee como integer
+
+datos.train <- read.csv("data_train.csv", colClasses = c("price" = "numeric"))
+datos.test <- read.csv("data_test.csv", colClasses = c("price" = "numeric"))
+
+cat("Data set train: num. observaciones = ", nrow(datos.train), "; valores ausentes: ", sum(is.na(datos.train)), "\n")
+
+```
+
+```{r}
+cat("Data set test: num. observaciones = ", nrow(datos.test), "; valores ausentes: ", sum(is.na(datos.test)), "\n")
+```
+Unimos los datos para simplificar la transformación de los tipos de variables y el análisis exploratorio. Creamos una nueva variable dataset con valores train/test para poder distinguirlos
+
+```{r}
+# unimos datos.train y datos.test
+datos <- bind_rows(train = datos.train, test = datos.test, .id = "dataset" )
+
+# liberamos memoria
+rm(list=c("datos.test", "datos.train"))
+
+# creamos variable precio/m^2
+datos <- datos %>% mutate(precio.m2 = price/area )
+
+head(datos) %>% select(c(1:8)) %>% kbl(caption = "data set") %>% kable_classic("striped", full_width = F, html_font = "Cambria")
+
+head(datos) %>% select(c(1,9:16)) %>% kbl(caption = "data set (cont.)") %>% kable_classic("striped", full_width = F, html_font = "Cambria")
+```
+
+```{r}
+str(datos)
+```
+
+# Análisis exploratorio y preprocesado
+## Datos faltantes. 
+
+```{r}
+# any(!complete.cases(datos)) # detección de si hay alguna fila incompleta
+apply(datos, 2, function(x) sum(is.na(x)))
+
+```
+
+#Ninguna variable tiene datos ausentes. 
+
+
+## Transformación de variables
+Las variables rooms, level y levels podemos tratarlas como cuantitativas discretas o como categórica. region es una variable categórica y también building_type y object_type. Sin embargo, region podría estar correlacionada con `geo_lon o geo_lat. De hecho podemos ver que a medida que la latitud aumenta también lo hace el valor indicado por la región. Evaluaremos este hecho más adelante al estudiar la correlación. Valoraremos en ese momento si hay que aplicar algún cambio. 
+
+El campo date lo sustituimos por el número de meses desde la fecha de referencia (31-05-2021), redondeando a su valor entero sin decimales. El resultado es un valor de tipo numérico con un rango de valores de [1,33]
+
+```{r}
+suppressMessages(library(lubridate))
+
+# fecha de referencia: 31-05-2021
+
+
+datos$date <- round(time_length(ymd("2021-05-31") - ymd(datos$date), unit = "months"), 0)
+
+datos$time <- hms(datos$time)
+
+datos$building_type <- factor(datos$building_type, 
+                              levels = c(0,1,2,3,4,5), 
+                              labels = c("Otro", "Panel", "Monolitico", "Ladrillo", "Blocky", "Madera"))
+
+datos$object_type <- factor(datos$object_type, 
+                             levels = c(1,11),
+                             labels = c("M.Sec", "Nuevo"))
+```
+
+
+# Análisis gráfico
+Analizar gráficamente los datos nos da una primera visión de la distribución de los datos de la existencia de outliers y de otros potenciales problemas
+
+
+```{r}
+# summary(datos)
+
+theme_set(
+  theme_minimal() +
+    theme(legend.position = "top")
+  )
+
+datos %>% dplyr::select(-id) %>% keep(is.numeric) %>% gather() %>% 
+  ggplot(aes(value)) + 
+  geom_histogram(color = "steelblue", fill = "white", bins = 30) + 
+  facet_wrap( ~ key, scales = "free", dir = "v") + labs (x="", y ="")
+```
+
+```{r}
+datos %>% dplyr::select(area, geo_lat, geo_lon, kitchen_area, level, levels, price, region, precio.m2) %>% gather() %>% 
+  ggplot(aes(value)) + 
+  geom_boxplot(color = "steelblue") + 
+  facet_wrap( ~ key, scales = "free", dir = "v") + labs (x="", y ="")
+```
+Como vemos existen valores extremos o outliers en todas las variables predictoras pero sobre todo en las variables area, kitchen_area en la variable a predecir, price. Las variables building_type, level, levels, region, y rooms son categóricas y no tienen una distribución uniforme.
+
+Un número reducido de observaciones presentan valores negativos en la variable precio:
+
+```{r}
+sum(datos$price <0)
+```
+y también existe un conjunto de observaciones con valor rooms=−2(el valor mínimo permitido es rooms=−1
+ para un estudio)
+ 
+```{r}
+sum(datos$rooms < -1)
+
+```
+
+A priori es dificil saber si esto se debe a un simple error tipográfico o algún otro tipo de error. Dado que este problema ocurre en una cantidad muy baja de elementos podemos tomar la decisión de eliminarlos. Creamos una copia para realizar esta y las siguientes transformaciones, reservando los datos originales sin modificar.
+
+# eliminar observaciones erroneas
+
+```{r}
+datos.reducidos <- datos %>% dplyr::filter(rooms >= -1 & price > 0)
+```
+
+
+## Outliers (I)
+Según el enunciado debemos considerar valores atípicos los siguientes:
+
+observaciones cuyo valor de kitchen_area < 2 m2
+observaciones que estén fuera del área mínima según habitaciones
+
+```{r}
+datos.reducidos <- datos.reducidos %>% filter(kitchen_area >= 2 )
+
+```
+
+```{r}
+# area mínima para un apartamento y para un estudio
+datos.reducidos <- datos.reducidos %>% 
+  mutate(min.area = case_when(
+    rooms > 0 ~ (rooms*9 + 12 + 6 + kitchen_area)*1.10,
+    rooms < 0 ~ (9 + 6)*1.05))
+
+# filtrado según minimos area
+datos.reducidos <- datos.reducidos %>%
+  filter(case_when(
+    rooms > 0 ~ min.area <= 10 + area,
+    rooms < 0 ~ min.area <= 5 + area))
+```
+
+# Outliers (II)
+
+Volvemos a analizar los datos y la presencia de valores atípicos en las variable dependiente price y àrea
+
+```{r}
+datos.reducidos %>% dplyr::select(-id) %>% keep(is.numeric) %>% gather() %>% 
+  ggplot(aes(value)) + 
+  geom_histogram(color = "steelblue", fill = "white", bins = 30) + 
+  facet_wrap( ~ key, scales = "free", dir = "h") + labs(x="", y="")
+```
+
+```{r}
+datos.reducidos %>% dplyr::select(area, geo_lat, geo_lon, kitchen_area, level, levels, price, region, precio.m2 ) %>% 
+  gather() %>%   
+  ggplot(aes(value)) + 
+  geom_boxplot(color = "steelblue") + 
+  facet_wrap( ~ key, scales = "free", dir = "v") + labs (x="", y ="")
+
+```
+Antes de continuar conviene echar un vistazo a la variable price en los dos datasets (test/train). Sus estadísticos muestran unos valores del valor medio similar y también los percentiles. La varianza es mayor en el dataset train pero esto, dados los valores atípicos que tiene es normal.
+
+```{r}
+# boxplot de price en categorías train/test
+datos.reducidos %>% dplyr::select(dataset, price) %>% 
+  ggplot(aes(x = dataset, y = price, group = dataset)) + 
+  geom_boxplot(colour = "steelblue")
+```
+
+```{r}
+cat("Estadísticos de la variable price\n")
+cat("-----------------------------------\n")
+
+cat("Dataset train:\n")
+cat("--------------\n")
+
+q <- datos.reducidos %>% filter(dataset == "train") %>% 
+  with(quantile(price, probs = c(0.01, 0.025, 0.975, 0.99)))
+
+m <- mean(datos.reducidos[datos.reducidos$dataset == 'train', ]$price)
+v <- var(datos.reducidos[datos.reducidos$dataset == 'train', ]$price)
+
+cat("percentiles 1, 25, 97.5, 99: ", q[1], q[2], q[3], q[4], "\n")
+cat("media: ", m, " ; varianza: ", v, "\n")
+
+cat("Dataset test:\n")
+cat("--------------\n")
+q <- datos.reducidos %>% filter(dataset == "test") %>% 
+  with(quantile(price, probs = c(0.01, 0.025, 0.975, 0.99)))
+
+m <- mean(datos.reducidos[datos.reducidos$dataset == 'test', ]$price)
+v <- var(datos.reducidos[datos.reducidos$dataset == 'test', ]$price)
+
+cat("percentiles 1, 25, 97.5, 99: ", q[1], q[2], q[3], q[4], "\n")
+cat("media: ", m, " ; varianza: ", v, "\n")
+
+# liberamos memoria
+rm(m,v,q)
+```
+Para eliminar los outlayers utilizamos el parámetro out de boxplot. En total son 671 observaciones
+```{r}
+# valores atípicos
+outliers.price <- which(datos.reducidos$price %in% boxplot(datos.reducidos$price, plot = FALSE)$out)
+outliers.area <- which(datos.reducidos$area %in% boxplot(datos.reducidos$area, plot = FALSE)$out)
+
+outliers.boxplot <- unique(c(outliers.price, outliers.area))
+
+# mostramos gráficamente las observaciones que vamos a eliminar
+
+datos.reducidos %>% ggplot(aes(x = area, y = price)) + 
+  geom_point(colour = "steelblue", alpha = 0.3) + 
+  geom_point(data = datos.reducidos[outliers.boxplot, ],
+             aes(x= area, y = price),
+             color = 'red',
+             size = 1) -> p1
+
+datos.reducidos %>% ggplot(aes(x = rooms, y = price)) + 
+  geom_point(colour = "steelblue", alpha = 0.3) + 
+  geom_point(data = datos.reducidos[outliers.boxplot,],
+             aes(x= rooms, y = price),
+             color = 'red',
+             size = 1) -> p2
+
+
+datos.reducidos %>% ggplot(aes(x = level, y = price)) + 
+  geom_point(colour = "steelblue", alpha = 0.3) + 
+  geom_point(data = datos.reducidos[outliers.boxplot,],
+             aes(x= level, y = price),
+             color = 'red',
+             size = 1) -> p3
+
+datos.reducidos %>% ggplot(aes(x = region, y = price)) + 
+  geom_point(colour = "steelblue", alpha = 0.3) + 
+  geom_point(data = datos.reducidos[outliers.boxplot,],
+             aes(x= region, y = price),
+             color = 'red',
+             size = 1) + 
+  theme (axis.text.x = element_text(size = 6, angle = 90))-> p4
+
+
+plot_grid(plot_grid(p1, p2, p3, ncol = 3), 
+          p4, 
+          ncol = 1)
+```
+
+```{r}
+# liberamos memoria
+rm(p1,p2,p3,p4)
+
+```
+
+
+```{r}
+datos.reducidos <- datos.reducidos[-outliers.boxplot,]
+
+datos.reducidos %>% ggplot(aes(x = area, y = price)) + 
+  geom_point(colour = "steelblue", alpha = 0.3)  -> p1
+
+datos.reducidos %>% ggplot(aes(x = rooms, y = price)) + 
+  geom_point(colour = "steelblue", alpha = 0.3) -> p2
+
+
+datos.reducidos %>% ggplot(aes(x = level, y = price)) + 
+  geom_point(colour = "steelblue", alpha = 0.3) -> p3
+
+datos.reducidos %>% ggplot(aes(x = region, y = price)) + 
+  geom_point(colour = "steelblue", alpha = 0.3) + 
+  theme (axis.text.x = element_text(size = 6, angle = 90))-> p4
+
+plot_grid(plot_grid(p1, p2, p3, ncol = 3), 
+          p4, 
+          ncol = 1)
+
+```
+```{r}
+# liberamos memoria
+rm(p1,p2,p3,p4)
+rm(outliers.area, outliers.boxplot, outliers.price)
+```
+
+
+
+```{r}
+datos.reducidos %>% dplyr::select(-id) %>% keep(is.numeric) %>% gather() %>% 
+  ggplot(aes(value)) + 
+  geom_histogram(color = "steelblue", fill = "white", bins = 30) + 
+  facet_wrap( ~ key, scales = "free", dir = "h") + labs(x="", y="")
+```
+
+
+```{r}
+datos.reducidos %>% dplyr::select(area, geo_lat, geo_lon, kitchen_area, level, levels, price, region,precio.m2 ) %>% 
+  gather() %>%   
+  ggplot(aes(value)) + 
+  geom_boxplot(color = "steelblue") + 
+  facet_wrap( ~ key, scales = "free", dir = "v") + labs (x="", y ="")
+```
+
+Por supuesto los gráficos boxplot siguen mostrándonos outliers ya que los datos intercuartiles han cambiado. Ahora es más evidente que la variable area, kitchen_area, price presentan una distribución presentan una distribución que podría ser normal.
+
+El precio medio del metro cuadrado está dentro de los márgenes que nos indica el enunciado
+
+```{r}
+cat("Dataset train \n")
+cat("-------------------------------- \n")
+cat("num observaciones:", nrow(datos.reducidos[datos.reducidos$dataset == "train", ]), "\n")
+cat("valor medio precio/m2: ", mean(datos.reducidos$precio.m2), "\n")
+
+cat("\n\n")
+
+cat("Dataset test \n")
+cat("-------------------------------- \n")
+cat("num observaciones:", nrow(datos.reducidos[datos.reducidos$dataset == "test", ]), "\n")
+cat("valor medio precio/m2: ", mean(datos.reducidos$precio.m2), "\n")
+
+```
+A partir de este punto, acabado el proceso de transformación y limpieza volvemos a dividir los datasets.
+
+```{r}
+datos.train <- datos.reducidos %>%   filter(dataset == "train") %>% 
+  dplyr::select(-c(dataset, min.area))
+
+datos.test <- datos.reducidos %>%   filter(dataset == "test") %>%  
+  dplyr::select(-c(dataset, min.area))
+
+# liberamos memoria
+rm(datos.reducidos)
+```
+
+# Escalado y centrado
+## Se realizará el escalado en los modelos que lo requieran mediante el argumento preProcess en la función train().
+
+# Selección de variables
+## Variable cualitativas y cuantitativas discretas
+### Estudiamos price frente a los diversos niveles que toman las variables level, levels, rooms, object_type, y building_type
+
+```{r}
+# respecto a la altura
+
+p1 <- datos.train %>% 
+  ggplot(aes(x= as.factor(level), y=price)) + 
+  geom_boxplot(color = "steelblue", outlier.shape = NA) + labs(x = "level") +
+  theme (axis.text.x = element_text(size = 7, angle = 90))
+
+p2 <- datos.train %>% 
+  ggplot(aes(x= as.factor(levels), y=price)) + 
+  geom_boxplot(color = "steelblue", outlier.shape = NA) + labs(x = "levels") +
+  theme (axis.text.x = element_text(size = 7, angle = 90))
+
+p3 <- datos.train %>% 
+  ggplot(aes(x= as.factor(rooms), y=price)) + labs(x = "rooms") +
+  geom_boxplot(color = "steelblue")
+
+p4 <- datos.train %>% 
+  ggplot(aes(x= object_type, y=price)) + labs(x = "Mercado") +
+  geom_boxplot(color = "steelblue")
+
+p5 <- datos.train %>%  
+  ggplot(aes(x= building_type, y=price)) + labs(x = "Materiales") +
+  geom_boxplot(color = "steelblue") +
+  theme (axis.text.x = element_text(size = 7, angle = 90))
+
+
+plot_grid(p1,p2,p3,p4, p5, ncol = 2)
+```
+El número de habitaciones está altamente correlacionado con el precio: a mayor número de habitaciones, más alto el precio del piso. Que sea nuevo o de segunda mano parece tener una relevancia menor. En cuanto al piso y al número de plantas del edificio parece que existe una influencia sobre todo en edificios de muchas plantas. Es muy probable que estos edificios sean construcciones en ciudades con mayor densidad de habitantes. Este tipo de construcción suele estar en zonas de alto valor adquisitivo.
+
+```{r}
+# liberamos memoria
+rm(p1,p2,p3,p4, p5)
+
+```
+```{r}
+install.packages("GGally")
+library(GGally)
+```
+
+
+```{r}
+datos.train %>% dplyr::select(-c(id)) %>%   keep(is.numeric) %>% 
+  GGally::ggcorr(size = 3, hjust = 0.75, label = TRUE, label_size = 4)
+```
+### De este analisis podemos ver que la variable time no correlaciona. La correlación de date es practicamente nula. rooms-àrea y geo_lon-region tienen una alta correlación entre sí como ya se intuía. Como también lo tienen level y levels.precio.m2 es una variable que hemos creado para evaluar los outliers y podemos eliminar.
+
+
+
