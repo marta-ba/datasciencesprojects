@@ -1,6 +1,16 @@
 
 # Online Shopper Behavior Analysis
-## El conjunto de datos que se proporciona consta de vectores de características que pertenecen a 12.330 sesiones y se construyó de tal manera que cada sesión pertenecía a un usuario diferente en un período de 1 año, con objeto de evitar cualquier tendencia a una campaña específica, día especial, perfil de usuario o período. De las 12.330 sesiones, el 84.5% (10.422) fueron muestras de clase negativas que no terminaron con compras, y el resto (1.908) fueron muestras de clases positivas que terminaron con compras. El conjunto de datos consta de 10 atributos numéricos y 8 categóricos. El atributo ‘Ingresos’ se puede usar como etiqueta de clase. El objetivo general de esta prueba de evaluación consiste en analizar el comportamiento del comprador en línea en tiempo real. Para ello, se testarán diferentes métodos y algoritmos y se deberá seleccionar aquel o aquellos métodos que sean más óptimos de cara a predecir la intención de compra del visitante
+**Englis Description**
+
+The provided dataset consists of feature vectors from 12,330 sessions, constructed in such a way that each session belonged to a different user over a one-year period. This was done to avoid any bias related to a specific campaign, special day, user profile, or time period.
+
+Of the 12,330 sessions, 84.5% (10,422) were negative class samples that did not result in purchases, while the remaining 15.5% (1,908) were positive class samples that ended in purchases. The dataset consists of 10 numerical attributes and 8 categorical attributes. The ‘Revenue’ attribute can be used as the class label.
+
+The overall objective of this evaluation test is to analyze online shopper behavior in real-time. To achieve this, different methods and algorithms will be tested, and the most optimal one(s) for predicting the visitor's purchase intention should be selected.
+
+**Spanish Description**
+
+ El conjunto de datos que se proporciona consta de vectores de características que pertenecen a 12.330 sesiones y se construyó de tal manera que cada sesión pertenecía a un usuario diferente en un período de 1 año, con objeto de evitar cualquier tendencia a una campaña específica, día especial, perfil de usuario o período. De las 12.330 sesiones, el 84.5% (10.422) fueron muestras de clase negativas que no terminaron con compras, y el resto (1.908) fueron muestras de clases positivas que terminaron con compras. El conjunto de datos consta de 10 atributos numéricos y 8 categóricos. El atributo ‘Ingresos’ se puede usar como etiqueta de clase. El objetivo general de esta prueba de evaluación consiste en analizar el comportamiento del comprador en línea en tiempo real. Para ello, se testarán diferentes métodos y algoritmos y se deberá seleccionar aquel o aquellos métodos que sean más óptimos de cara a predecir la intención de compra del visitante
 
 # Introduction  
 
