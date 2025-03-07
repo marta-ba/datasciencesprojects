@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
-# Online Shopper Behavior Analysis & Prediction
+# Online Shopper Behavior Analysis
 ## El conjunto de datos que se proporciona consta de vectores de características que pertenecen a 12.330 sesiones y se construyó de tal manera que cada sesión pertenecía a un usuario diferente en un período de 1 año, con objeto de evitar cualquier tendencia a una campaña específica, día especial, perfil de usuario o período. De las 12.330 sesiones, el 84.5% (10.422) fueron muestras de clase negativas que no terminaron con compras, y el resto (1.908) fueron muestras de clases positivas que terminaron con compras. El conjunto de datos consta de 10 atributos numéricos y 8 categóricos. El atributo ‘Ingresos’ se puede usar como etiqueta de clase. El objetivo general de esta prueba de evaluación consiste en analizar el comportamiento del comprador en línea en tiempo real. Para ello, se testarán diferentes métodos y algoritmos y se deberá seleccionar aquel o aquellos métodos que sean más óptimos de cara a predecir la intención de compra del visitante
 
 ```{r}
