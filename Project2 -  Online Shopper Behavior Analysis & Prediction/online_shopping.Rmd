@@ -1,14 +1,3 @@
----
-title: "online shopping model"
-author: "Marta Blanco"
-date: "2024-12-25"
-output: html_document
----
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
 
 # Online Shopper Behavior Analysis
 ## El conjunto de datos que se proporciona consta de vectores de características que pertenecen a 12.330 sesiones y se construyó de tal manera que cada sesión pertenecía a un usuario diferente en un período de 1 año, con objeto de evitar cualquier tendencia a una campaña específica, día especial, perfil de usuario o período. De las 12.330 sesiones, el 84.5% (10.422) fueron muestras de clase negativas que no terminaron con compras, y el resto (1.908) fueron muestras de clases positivas que terminaron con compras. El conjunto de datos consta de 10 atributos numéricos y 8 categóricos. El atributo ‘Ingresos’ se puede usar como etiqueta de clase. El objetivo general de esta prueba de evaluación consiste en analizar el comportamiento del comprador en línea en tiempo real. Para ello, se testarán diferentes métodos y algoritmos y se deberá seleccionar aquel o aquellos métodos que sean más óptimos de cara a predecir la intención de compra del visitante
@@ -32,8 +21,8 @@ The preprocessing steps included:
 3. **Feature engineering**: Categorical variables were encoded, and numerical features were standardized.  
 4. **Data splitting**: The dataset was divided into **training (80%)** and **testing (20%)** subsets.  
 
-```{r}
-# Load necessary libraries
+
+# Necessary libraries
 library(DataExplorer)
 library(knitr)
 library(kableExtra)
@@ -62,7 +51,7 @@ Several visualizations were generated to understand the dataset:
 Correlation matrix: Identified relationships between numerical variables.
 Class distribution: Confirmed dataset imbalance.
 Feature importance: Determined key predictors of purchase behavior.
-{r}
+
 # Correlation plot
 corrplot(cor(trainData[, sapply(trainData, is.numeric)]), method = "circle")
 Model Selection and Training
@@ -73,7 +62,6 @@ Random Forest
 Gradient Boosting (XGBoost)
 Each model was evaluated based on accuracy, precision, recall, and F1-score. Due to class imbalance, techniques like SMOTE were applied.
 
-{r}
 # Train a Random Forest model
 rf_model <- train(Revenue ~ ., data = trainData, method = "rf", trControl = trainControl(method = "cv", number = 5))
 Results and Comparison
