@@ -33,6 +33,8 @@ The preprocessing steps included:
 
 
 # Necessary libraries
+
+{r}
 library(DataExplorer)
 library(knitr)
 library(kableExtra)
@@ -49,6 +51,7 @@ library(ggplot2)
 library(ggplot2)
 library(doParallel)
 library(GGally)
+{r}
 
 # Data splitting
 set.seed(123)
